@@ -234,8 +234,11 @@ class DataflowBuildConfig:
     #: very high performance.
     mvau_wwidth_max: Optional[int] = 36
 
-    #: (Optional) Double-pump DSP58s in MVU/VVU layers if possible
+    #: (Optional) Double-pump DSP58s in RTL MVU/VVU layers if possible
     enable_pumped_compute: Optional[bool] = False
+
+    #: (Optional) Double-pump memories in RTL MVU/VVU layers if possible
+    enable_pumped_memory: Optional[bool] = False
 
     #: (Optional) Whether thresholding layers (which implement quantized
     #: activations in FINN) will be implemented as stand-alone HLS layers,
@@ -284,6 +287,10 @@ class DataflowBuildConfig:
     #: Memory resource type for large FIFOs
     #: Only relevant when `auto_fifo_depths = True`
     large_fifo_mem_style: Optional[LargeFIFOMemStyle] = LargeFIFOMemStyle.AUTO
+
+    #: FIFOs deeper than this will use Vivado FIFO IP
+    #: (e.g. impl_style="vivado")
+    vivado_fifo_threshold: Optional[int] = 256
 
     #: Target clock frequency (in nanoseconds) for Vivado HLS synthesis.
     #: e.g. `hls_clk_period_ns=5.0` will target a 200 MHz clock.

@@ -490,10 +490,10 @@ def step_specialize_to_rtl(model: ModelWrapper, cfg: DataflowBuildConfig):
         model = model.transform(trn)
 
     # If double-pumping enabled, annotate relevant MVU/VVU layers
-    if cfg.enable_pumped_compute:
-        for n in model.graph.node:
-            if n.op_type in ["MatrixVectorActivation_rtl", "VectorVectorActivation_rtl"]:
-                getCustomOp(n).set_nodeattr("pumpedCompute", 1)
+    for n in model.graph.node:
+        if n.op_type in ["MatrixVectorActivation_rtl", "VectorVectorActivation_rtl"]:
+            getCustomOp(n).set_nodeattr("pumpedCompute", int(cfg.enable_pumped_compute))
+            getCustomOp(n).set_nodeattr("pumpedMemory", int(cfg.enable_pumped_memory))
     return model
 
 
@@ -625,6 +625,7 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
                     cfg._resolve_fpga_part(),
                     cfg._resolve_hls_clk_period(),
                     vivado_ram_style=cfg.large_fifo_mem_style,
+                    max_qsrl_depth=cfg.vivado_fifo_threshold,
                     force_python_sim=force_python_sim,
                 )
             )
