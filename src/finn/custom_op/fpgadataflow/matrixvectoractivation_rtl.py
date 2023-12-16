@@ -984,12 +984,12 @@ class MatrixVectorActivation_rtl(HLSCustomOp):
         #    "Infeasible clk target of {} ns has been set, consider lowering".format(clk)
         #    + " the targeted clock frequency!"
         # )
-        # critical_path_dsps = np.floor((clk - 0.741) / 0.605 + 1)
-        # max_chain_len = np.ceil(self.get_nodeattr("SIMD") / 3)
-        # dsp_chain_len = critical_path_dsps if critical_path_dsps < max_chain_len
-        #                                       else max_chain_len
-        # return dsp_chain_len
-        return 1
+        critical_path_dsps = np.floor((clk - 0.741) / 0.605 + 1)
+        max_chain_len = np.ceil(self.get_nodeattr("SIMD") / 3)
+        dsp_chain_len = critical_path_dsps if critical_path_dsps < max_chain_len
+                                              else max_chain_len
+        return dsp_chain_len
+        # return 1
 
     def _resolve_impl_style(self, fpgapart):
         # Based on target device and activation/weight-width, choose the
@@ -1063,7 +1063,12 @@ class MatrixVectorActivation_rtl(HLSCustomOp):
         code_gen_dict["$SIGNED_ACTIVATIONS$"] = (
             [str(1)] if (self.get_input_datatype(0).min() < 0) else [str(0)]
         )
-        code_gen_dict["$SEGMENTLEN$"] = [str(self._resolve_segment_len(clk))]
+        if self.get_nodeattr("pumpedCompute") == 1:
+            dsp_clk = 2*clk
+            code_gen_dict["$SEGMENTLEN$"] = [str(self._resolve_segment_len(dsp_clk))]
+        else:
+            dsp_clk = clk
+            code_gen_dict["$SEGMENTLEN$"] = [str(self._resolve_segment_len(dsp_clk))]
 
         return template_path, code_gen_dict
 
