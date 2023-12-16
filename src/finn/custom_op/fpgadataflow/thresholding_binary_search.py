@@ -521,6 +521,7 @@ class Thresholding_Binary_Search(HLSCustomOp):
             verilog_path=verilog_paths,
             trace_depth=get_rtlsim_trace_depth(),
             top_module_name=self.get_nodeattr("gen_top_module"),
+            auto_eval=False,
         )
 
         # save generated lib filename in attribute
@@ -573,10 +574,6 @@ class Thresholding_Binary_Search(HLSCustomOp):
         sim = self.get_rtlsim()
         nbits = self.get_instream_width()
         inp = npy_to_rtlsim_input("{}/input_0.npy".format(code_gen_dir), export_idt, nbits)
-
-        super().reset_rtlsim(sim)
-        super().toggle_clk(sim)
-
         io_names = self.get_verilog_top_module_intf_names()
         istream_name = io_names["s_axis"][0][0]
         ostream_name = io_names["m_axis"][0][0]
@@ -613,7 +610,15 @@ class Thresholding_Binary_Search(HLSCustomOp):
     def rtlsim_multi_io(self, sim, io_dict):
         "Run rtlsim for this node, supports multiple i/o streams."
 
+        rtlsim_so = self.get_nodeattr("rtlsim_so")
+        so_dir = os.path.dirname(os.path.realpath(rtlsim_so))
+        olcwd = os.getcwd()
+        os.chdir(so_dir)
+
         # signal name prefix
+        # TODO if the interface names on this component get standardized,
+        # it won't need its own rtlsim_multi_io variant anymore and can just
+        # use the base class one
         sname = "_"
 
         trace_file = self.get_nodeattr("rtlsim_trace")
@@ -626,9 +631,11 @@ class Thresholding_Binary_Search(HLSCustomOp):
             num_out_values,
             trace_file=trace_file,
             sname=sname,
+            do_reset=True,
             liveness_threshold=pyverilate_get_liveness_threshold_cycles(),
         )
         self.set_nodeattr("cycles_rtlsim", total_cycle_count)
+        os.chdir(olcwd)
 
     def code_generation_ipi(self):
         """Constructs and returns the TCL commands for node instantiation as an RTL
