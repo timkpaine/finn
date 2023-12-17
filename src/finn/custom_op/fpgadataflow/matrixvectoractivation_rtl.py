@@ -986,8 +986,7 @@ class MatrixVectorActivation_rtl(HLSCustomOp):
         # )
         critical_path_dsps = np.floor((clk - 0.741) / 0.605 + 1)
         max_chain_len = np.ceil(self.get_nodeattr("SIMD") / 3)
-        dsp_chain_len = critical_path_dsps if critical_path_dsps < max_chain_len
-                                              else max_chain_len
+        dsp_chain_len = critical_path_dsps if critical_path_dsps < max_chain_len else max_chain_len
         return dsp_chain_len
         # return 1
 
