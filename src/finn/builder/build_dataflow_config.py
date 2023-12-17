@@ -351,6 +351,9 @@ class DataflowBuildConfig:
     #: rtlsim, otherwise they will be replaced by HLS implementations.
     rtlsim_use_vivado_comps: Optional[bool] = True
 
+    #: If set to True, Only scripts will be generated for stiched IP step
+    gen_vivado_script_only: Optional[bool] = False
+
     def _resolve_hls_clk_period(self):
         if self.hls_clk_period_ns is None:
             # use same clk for synth and hls if not explicitly specified
