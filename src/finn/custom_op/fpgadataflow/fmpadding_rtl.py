@@ -318,6 +318,21 @@ class FMPadding_rtl(HLSCustomOp):
         self.set_nodeattr("ipgen_path", code_gen_dir)
         self.set_nodeattr("ip_path", code_gen_dir)
 
+    def get_all_verilog_paths(self):
+        "Return list of all folders containing Verilog code for this node."
+
+        code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
+        verilog_paths = [code_gen_dir]
+        return verilog_paths
+
+    def get_verilog_top_filename(self):
+        "Return the Verilog top module filename for this node."
+
+        verilog_file = "{}/{}.v".format(
+            self.get_nodeattr("code_gen_dir_ipgen"), self.get_nodeattr("gen_top_module")
+        )
+        return verilog_file
+
     def prepare_rtlsim(self):
         """Creates a Verilator emulation library for the RTL code generated
         for this node, sets the rtlsim_so attribute to its path and returns
@@ -360,10 +375,10 @@ class FMPadding_rtl(HLSCustomOp):
         ]
 
         sourcefiles = [os.path.join(code_gen_dir, f) for f in sourcefiles]
-
-        cmd = []
+        source_target = "./ip/verilog/rtl_ops/%s" % self.onnx_node.name
+        cmd = ["file mkdir %s" % source_target]
         for f in sourcefiles:
-            cmd += ["add_files -norecurse %s" % (f)]
+            cmd += ["add_files -copy_to %s -norecurse %s" % (source_target, f)]
         cmd += [
             "create_bd_cell -type module -reference %s %s"
             % (self.get_nodeattr("gen_top_module"), self.onnx_node.name)

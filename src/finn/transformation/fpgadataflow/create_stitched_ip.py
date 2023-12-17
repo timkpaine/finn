@@ -31,14 +31,12 @@ import multiprocessing as mp
 import os
 import subprocess
 import warnings
+from pathlib import Path
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import get_num_default_workers
-from shutil import copytree
+from shutil import copy, copytree
 
-from finn.transformation.fpgadataflow.replace_verilog_relpaths import (
-    ReplaceVerilogRelPaths,
-)
 from finn.util.basic import make_build_dir
 from finn.util.fpgadataflow import is_fpgadataflow_node
 
@@ -97,11 +95,13 @@ class CreateStitchedIP(Transformation):
         self.has_s_axis = False
         self.s_axis_idx = 0
         self.clock_reset_are_external = False
+        self.clock2x_is_external = False
         self.create_cmds = []
         self.connect_cmds = []
         # keep track of top-level interface names
         self.intf_names = {
             "clk": [],
+            "clk2x": [],
             "rst": [],
             "s_axis": [],
             "m_axis": [],
@@ -109,10 +109,19 @@ class CreateStitchedIP(Transformation):
             "axilite": [],
         }
 
+    def _is_double_pumped(self, node):
+        try:
+            pumped_compute = getCustomOp(node).get_nodeattr("pumpedCompute")
+            return pumped_compute == 1
+        except Exception:
+            return False
+
     def connect_clk_rst(self, node):
         inst_name = node.name
         node_inst = getCustomOp(node)
         clock_intf_name = node_inst.get_verilog_top_module_intf_names()["clk"][0]
+        if self._is_double_pumped(node):
+            clock2x_intf_name = node_inst.get_verilog_top_module_intf_names()["clk2x"][0]
         reset_intf_name = node_inst.get_verilog_top_module_intf_names()["rst"][0]
         # make clock and reset external, if they aren't already
         if not self.clock_reset_are_external:
@@ -137,6 +146,22 @@ class CreateStitchedIP(Transformation):
                 "connect_bd_net [get_bd_ports ap_clk] [get_bd_pins %s/%s]"
                 % (inst_name, clock_intf_name)
             )
+        # make clk2x external, if it isn't already and connect clk and reset
+        if self._is_double_pumped(node):
+            if not self.clock2x_is_external:
+                self.connect_cmds.append(
+                    "make_bd_pins_external [get_bd_pins %s/%s]" % (inst_name, clock2x_intf_name)
+                )
+                self.connect_cmds.append("set_property name ap_clk2x [get_bd_ports ap_clk2x_0]")
+                self.clock2x_is_external = True
+                self.intf_names["clk2x"] = ["ap_clk2x"]
+            # otherwise connect clock and reset
+            else:
+                if self._is_double_pumped(node):
+                    self.connect_cmds.append(
+                        "connect_bd_net [get_bd_ports ap_clk2x] [get_bd_pins %s/%s]"
+                        % (inst_name, clock2x_intf_name)
+                    )
 
     def connect_axi(self, node):
         inst_name = node.name
@@ -277,9 +302,8 @@ class CreateStitchedIP(Transformation):
         self.connect_cmds.append("assign_bd_address")
 
     def apply(self, model):
-        # ensure non-relative readmemh .dat files
-        model = model.transform(ReplaceVerilogRelPaths())
         ip_dirs = ["list"]
+        meminit_files = []
         # add RTL streamer IP
         ip_dirs.append("$::env(FINN_ROOT)/finn-rtllib/memstream")
         if self.signature:
@@ -303,6 +327,7 @@ class CreateStitchedIP(Transformation):
             # ensure that all nodes are fpgadataflow, and that IPs are generated
             assert is_fpgadataflow_node(node), "All nodes must be FINN fpgadataflow nodes."
             node_inst = getCustomOp(node)
+            meminit_files.extend(node_inst.get_all_meminit_filenames(abspath=True))
             ip_dir_value = node_inst.get_nodeattr("ip_path")
             assert os.path.isdir(ip_dir_value), "IP generation directory doesn't exist."
             ip_dirs += [ip_dir_value]
@@ -355,12 +380,26 @@ class CreateStitchedIP(Transformation):
         prjname = "finn_vivado_stitch_proj"
         vivado_stitch_proj_dir = make_build_dir(prefix="vivado_stitch_proj_")
         model.set_metadata_prop("vivado_stitch_proj", vivado_stitch_proj_dir)
+
+        # create subdir and copy meminit files
+        meminit_subdir = vivado_stitch_proj_dir + "/meminit"
+        os.makedirs(meminit_subdir, exist_ok=True)
+        meminit_basenames = []
+        for meminit_file in meminit_files:
+            copy(meminit_file, meminit_subdir)
+            meminit_basenames.append(str(Path(meminit_file).name))
+        with open(vivado_stitch_proj_dir + "/all_meminit_srcs.txt", "w") as f:
+            f.write("\n".join(meminit_basenames))
+
         # start building the tcl script
         tcl = []
         # create vivado project
         tcl.append(
             "create_project %s %s -part %s" % (prjname, vivado_stitch_proj_dir, self.fpgapart)
         )
+        # create dir for copying RTL module op sources into
+        tcl.append("file mkdir ./ip/verilog")
+        tcl.append("file mkdir ./ip/verilog/rtl_ops")
         # no warnings on long module names
         tcl.append("set_msg_config -id {[BD 41-1753]} -suppress")
         # add all the generated IP dirs to ip_repo_paths
@@ -376,6 +415,10 @@ class CreateStitchedIP(Transformation):
         fclk_hz = fclk_mhz * 1000000
         model.set_metadata_prop("clk_ns", str(self.clk_ns))
         tcl.append("set_property CONFIG.FREQ_HZ %d [get_bd_ports /ap_clk]" % round(fclk_hz))
+        if self.clock2x_is_external:
+            tcl.append(
+                "set_property CONFIG.FREQ_HZ %d [get_bd_ports /ap_clk2x]" % round(2 * fclk_hz)
+            )
         tcl.append("validate_bd_design")
         tcl.append("save_bd_design")
         # create wrapper hdl (for rtlsim later on)
@@ -413,6 +456,10 @@ class CreateStitchedIP(Transformation):
                 "report_utilization -hierarchical -hierarchical_depth 5 "
                 "-file %s_partition_util.rpt" % block_name
             )
+            tcl.append(
+                "report_utilization -hierarchical -hierarchical_depth 5 "
+                "-file %s_partition_util.xml -format xml" % block_name
+            )
         # export block design itself as an IP core
         block_vendor = "xilinx_finn"
         block_library = "finn"
@@ -426,6 +473,11 @@ class CreateStitchedIP(Transformation):
             )
             % (vivado_stitch_proj_dir, block_vendor, block_library, block_name)
         )
+        if self.clock2x_is_external:
+            tcl.append(
+                "ipx::infer_bus_interface ap_clk2x xilinx.com:signal:clock_rtl:1.0 "
+                "[ipx::current_core]"
+            )
         # Allow user to customize clock in deployment of stitched IP
         tcl.append("set_property ipi_drc {ignore_freq_hz true} [ipx::current_core]")
         # in some cases, the IP packager seems to infer an aperture of 64K or 4G,
@@ -436,41 +488,80 @@ class CreateStitchedIP(Transformation):
             "[ipx::get_address_spaces m_axi_gmem0 -of_objects [ipx::current_core]]"
         )
         tcl.append("set_property core_revision 2 [ipx::find_open_core %s]" % block_vlnv)
-        tcl.append("ipx::create_xgui_files [ipx::find_open_core %s]" % block_vlnv)
         # mark bus interface params as user-resolvable to avoid FREQ_MHZ mismatches
         tcl.append(
             "set_property value_resolve_type user [ipx::get_bus_parameters "
             "-of [ipx::get_bus_interfaces -of [ipx::current_core ]]]"
         )
+        tcl.append(
+            "set_property auto_family_support_level level_2 "
+            "[ipx::find_open_core %s]" % block_vlnv
+        )
+        # clean up existing source references
+        tcl.append(
+            "ipx::remove_all_file_group [ipx::find_open_core xilinx_finn:finn:finn_design:1.0]"
+        )
+        tcl.append("ipx::create_xgui_files [ipx::find_open_core %s]" % block_vlnv)
+        # remove sim and src folders
+        tcl.append("file delete -force %s/ip/sim" % vivado_stitch_proj_dir)
+        tcl.append("file delete -force %s/ip/src" % vivado_stitch_proj_dir)
+        # manually add file group for Verilog sim and synth
+        tcl.append("ipx::add_file_group xilinx_verilogbehavioralsimulation [ipx::current_core]")
+        tcl.append(
+            "set_property model_name %s_wrapper [ipx::get_file_groups "
+            "xilinx_verilogbehavioralsimulation -of_objects [ipx::current_core]]" % block_name
+        )
+        tcl.append("ipx::add_file_group xilinx_verilogsynthesis [ipx::current_core]")
+        tcl.append(
+            "set_property model_name %s_wrapper [ipx::get_file_groups "
+            "xilinx_verilogsynthesis -of_objects [ipx::current_core]]" % block_name
+        )
+        # copy Verilog & meminit sources
+        tcl.append("file copy ./finn_vivado_stitch_proj.gen/sources_1/bd/finn_design ./ip/verilog")
+        tcl.append("file copy ./meminit ./ip")
+        # build a list of all Verilog source files and generate all_verilog_srcs.txt
+        tcl.append(
+            "set all_v_files [get_files -filter {USED_IN_SYNTHESIS == 1 && "
+            '(FILE_TYPE == Verilog || FILE_TYPE == SystemVerilog || FILE_TYPE =="Verilog Header")}]'
+        )
+        tcl.append("set fp [open %s/all_verilog_srcs.txt w]" % vivado_stitch_proj_dir)
+        tcl.append("foreach vf $all_v_files {puts $fp $vf}")
+        tcl.append("close $fp")
+
+        # open list of all dat files provided by FINN compiler
+        # add to both synth and sim filesets
+        tcl.append(
+            """set fp [open all_meminit_srcs.txt r]
+set fset_sim [ipx::get_file_groups xilinx_verilogbehavioralsimulation]
+set fset_synth [ipx::get_file_groups xilinx_verilogsynthesis]
+while {[gets $fp line]>=0} {
+    set current_file [ipx::add_file meminit/$line $fset_sim]
+    set_property type "mif" $current_file
+    set current_file [ipx::add_file meminit/$line $fset_synth]
+    set_property type "mif" $current_file
+}
+close $fp"""
+        )
+
+        # walk list of all Verilog files
+        # replace path prefix, then add to both synth and sim filesets
+        tcl.append(
+            """foreach vf $all_v_files {
+    set updated_path [string map {%s/finn_vivado_stitch_proj.gen/sources_1/bd verilog} $vf]
+    ipx::add_file $updated_path [ipx::get_file_groups xilinx_verilogbehavioralsimulation]
+    ipx::add_file $updated_path [ipx::get_file_groups xilinx_verilogsynthesis]
+}"""
+            % vivado_stitch_proj_dir
+        )
+        tcl.append("set_property sdx_kernel true [ipx::find_open_core %s]" % block_vlnv)
+        tcl.append("set_property sdx_kernel_type rtl [ipx::find_open_core %s]" % block_vlnv)
+        tcl.append("set_property supported_families { } [ipx::find_open_core %s]" % block_vlnv)
+        tcl.append(
+            "set_property xpm_libraries {XPM_CDC XPM_MEMORY XPM_FIFO} "
+            "[ipx::find_open_core %s]" % block_vlnv
+        )
         # if targeting Vitis, add some properties to the IP
         if self.vitis:
-            # replace source code with dcp
-            tcl.append("set_property sdx_kernel true [ipx::find_open_core %s]" % block_vlnv)
-            tcl.append("set_property sdx_kernel_type rtl [ipx::find_open_core %s]" % block_vlnv)
-            tcl.append("set_property supported_families { } [ipx::find_open_core %s]" % block_vlnv)
-            tcl.append(
-                "set_property xpm_libraries {XPM_CDC XPM_MEMORY XPM_FIFO} "
-                "[ipx::find_open_core %s]" % block_vlnv
-            )
-            tcl.append(
-                "set_property auto_family_support_level level_2 "
-                "[ipx::find_open_core %s]" % block_vlnv
-            )
-            # remove all files from synthesis and sim groups
-            # we'll replace with DCP, stub, and xdc
-            tcl.append(
-                "ipx::remove_all_file "
-                "[ipx::get_file_groups xilinx_anylanguagebehavioralsimulation]"
-            )
-            tcl.append("ipx::remove_all_file " "[ipx::get_file_groups xilinx_anylanguagesynthesis]")
-            tcl.append(
-                "ipx::remove_file_group "
-                "xilinx_anylanguagebehavioralsimulation [ipx::current_core]"
-            )
-            tcl.append("ipx::remove_file_group " "xilinx_anylanguagesynthesis [ipx::current_core]")
-            # remove sim and src folders
-            tcl.append("file delete -force %s/ip/sim" % vivado_stitch_proj_dir)
-            tcl.append("file delete -force %s/ip/src" % vivado_stitch_proj_dir)
             # copy and add DCP, stub, and xdc
             tcl.append("file mkdir %s/ip/dcp" % vivado_stitch_proj_dir)
             tcl.append("file mkdir %s/ip/impl" % vivado_stitch_proj_dir)
@@ -574,20 +665,12 @@ while { [eof $ifile] != 1 } {
 }
 close $ifile
 close $ofile
+
+ipx::check_integrity -quiet -xrt [ipx::find_open_core xilinx_finn:finn:finn_design:1.0]
+ipx::archive_core finn_ip.zip [ipx::find_open_core xilinx_finn:finn:finn_design:1.0]
 """
         )
 
-        # export list of used Verilog files (for rtlsim later on)
-        tcl.append(
-            "set all_v_files [get_files -filter {USED_IN_SYNTHESIS == 1 "
-            + "&& (FILE_TYPE == Verilog || FILE_TYPE == SystemVerilog "
-            + '|| FILE_TYPE =="Verilog Header")}]'
-        )
-        v_file_list = "%s/all_verilog_srcs.txt" % vivado_stitch_proj_dir
-        tcl.append("set fp [open %s w]" % v_file_list)
-        # write each verilog filename to all_verilog_srcs.txt
-        tcl.append("foreach vf $all_v_files {puts $fp $vf}")
-        tcl.append("close $fp")
         # write the project creator tcl script
         tcl_string = "\n".join(tcl) + "\n"
         with open(vivado_stitch_proj_dir + "/make_project.tcl", "w") as f:

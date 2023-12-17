@@ -100,6 +100,8 @@ class VectorVectorActivation(HLSCustomOp):
             # use xnor-popcount for binary weights/inputs, thus treating them
             # as bipolar
             "binaryXnorMode": ("i", False, 0, {0, 1}),
+            # Flag to specify whether RTL-based or HLS-based implementation is preferred
+            "preferred_backend": ("s", False, "rtl", {"hls", "rtl"}),
         }
         my_attrs.update(super().get_nodeattr_types())
         return my_attrs
@@ -566,7 +568,8 @@ class VectorVectorActivation(HLSCustomOp):
             if mem_mode == "decoupled":
                 # also save weights as Verilog .dat file
                 # This file will be ignored when synthesizing UltraScale memory.
-                weight_filename_rtl = "{}/memblock.dat".format(code_gen_dir)
+                weight_filename_rtl = self.get_decoupled_weight_filename(abspath=False)
+                weight_filename_rtl = code_gen_dir + "/" + weight_filename_rtl
                 self.make_weight_file(weights, "decoupled_verilog_dat", weight_filename_rtl)
         else:
             raise Exception(
@@ -1051,7 +1054,7 @@ class VectorVectorActivation(HLSCustomOp):
                 % (
                     self.calc_wmem(),
                     self.get_weightstream_width_padded(),
-                    self.get_nodeattr("code_gen_dir_ipgen") + "/memblock.dat",
+                    self.get_decoupled_weight_filename(abspath=False),
                     self.get_nodeattr("ram_style"),
                     node_name,
                     strm_inst,

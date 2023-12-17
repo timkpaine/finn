@@ -67,7 +67,7 @@ class MatrixVectorActivation(HLSCustomOp):
             "SIMD": ("i", True, 0),
             "MW": ("i", True, 0),
             "MH": ("i", True, 0),
-            "resType": ("s", False, "lut", {"auto", "lut", "dsp"}),
+            "resType": ("s", False, "dsp", {"auto", "lut", "dsp"}),
             "ActVal": ("i", False, 0),
             # FINN DataTypes for inputs, weights, outputs
             "inputDataType": ("s", True, ""),
@@ -122,6 +122,8 @@ class MatrixVectorActivation(HLSCustomOp):
             # vector through the accelerator. This will get rid of any old
             # weight data from the weight FIFOs.
             "runtime_writeable_weights": ("i", False, 0, {0, 1}),
+            # Flag to specify whether RTL-based or HLS-based implementation is preferred
+            "preferred_backend": ("s", False, "rtl", {"hls", "rtl"}),
         }
         my_attrs.update(super().get_nodeattr_types())
         return my_attrs
@@ -238,9 +240,16 @@ class MatrixVectorActivation(HLSCustomOp):
             or (mmode == "external")
         ):
             return 0
-        width_multiplier = math.ceil(mem_width / 72)
-        depth_multiplier = math.ceil(omega / 4096)
-        return width_multiplier * depth_multiplier
+        # TODO sanity-check all regions
+        # TODO for Versal only, only 4kx72 mode for UltraScale
+        if mem_width <= 9:
+            return (math.ceil(omega / 32768)) * (math.ceil(mem_width / 9))
+        elif mem_width <= 18 or omega > 8192:
+            return (math.ceil(omega / 16384)) * (math.ceil(mem_width / 18))
+        elif mem_width <= 36 or omega > 4096:
+            return (math.ceil(omega / 8192)) * (math.ceil(mem_width / 36))
+        else:
+            return (math.ceil(omega / 4096)) * (math.ceil(mem_width / 72))
 
     def bram_estimation(self):
         """Calculates resource estimation for BRAM based on:
@@ -848,7 +857,8 @@ class MatrixVectorActivation(HLSCustomOp):
             if mem_mode == "decoupled":
                 # also save weights as Verilog .dat file
                 # This file will be ignored when synthesizing UltraScale memory.
-                weight_filename_rtl = "{}/memblock.dat".format(code_gen_dir)
+                weight_filename_rtl = self.get_decoupled_weight_filename(abspath=False)
+                weight_filename_rtl = code_gen_dir + "/" + weight_filename_rtl
                 self.make_weight_file(weights, "decoupled_verilog_dat", weight_filename_rtl)
         else:
             raise Exception(
@@ -1351,7 +1361,7 @@ class MatrixVectorActivation(HLSCustomOp):
                 % (
                     self.calc_wmem(),
                     self.get_weightstream_width_padded(),
-                    self.get_nodeattr("code_gen_dir_ipgen") + "/memblock.dat",
+                    self.get_decoupled_weight_filename(abspath=False),
                     self.get_nodeattr("ram_style"),
                     node_name,
                     strm_inst,

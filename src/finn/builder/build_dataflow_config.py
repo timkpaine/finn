@@ -34,7 +34,7 @@ from enum import Enum
 from typing import Any, List, Optional
 
 from finn.transformation.fpgadataflow.vitis_build import VitisOptStrategy
-from finn.util.basic import alveo_default_platform, alveo_part_map, pynq_part_map
+from finn.util.basic import alveo_default_platform, part_map
 
 
 class AutoFIFOSizingMethod(str, Enum):
@@ -59,6 +59,7 @@ class DataflowOutputType(str, Enum):
     ESTIMATE_REPORTS = "estimate_reports"
     OOC_SYNTH = "out_of_context_synth"
     RTLSIM_PERFORMANCE = "rtlsim_performance"
+    RTLSIM_PERFORMANCE_NODEBYNODE = "rtlsim_performance_nodebynode"
     BITFILE = "bitfile"
     PYNQ_DRIVER = "pynq_driver"
     DEPLOYMENT_PACKAGE = "deployment_package"
@@ -104,6 +105,8 @@ class VerificationStepType(str, Enum):
     STREAMLINED_PYTHON = "streamlined_python"
     #: verify after step_apply_folding_config, using C++ for each HLS node
     FOLDED_HLS_CPPSIM = "folded_hls_cppsim"
+    #: verify after step_hls_ipgen, using RTL for each node
+    NODE_BY_NODE_RTLSIM = "node_by_node_rtlsim"
     #: verify after step_create_stitched_ip, using stitched-ip Verilog
     STITCHED_IP_RTLSIM = "stitched_ip_rtlsim"
 
@@ -116,6 +119,7 @@ default_build_dataflow_steps = [
     "step_tidy_up",
     "step_streamline",
     "step_convert_to_hls",
+    "step_specialize_to_rtl",
     "step_create_dataflow_partition",
     "step_target_fps_parallelization",
     "step_apply_folding_config",
@@ -123,6 +127,7 @@ default_build_dataflow_steps = [
     "step_generate_estimate_reports",
     "step_hls_codegen",
     "step_hls_ipgen",
+    "step_measure_nodebynode_rtlsim_performance",
     "step_set_fifo_depths",
     "step_create_stitched_ip",
     "step_measure_rtlsim_performance",
@@ -229,11 +234,17 @@ class DataflowBuildConfig:
     #: very high performance.
     mvau_wwidth_max: Optional[int] = 36
 
+    #: (Optional) Double-pump DSP58s in RTL MVU/VVU layers if possible
+    enable_pumped_compute: Optional[bool] = False
+
+    #: (Optional) Double-pump memories in RTL MVU/VVU layers if possible
+    enable_pumped_memory: Optional[bool] = False
+
     #: (Optional) Whether thresholding layers (which implement quantized
     #: activations in FINN) will be implemented as stand-alone HLS layers,
     #: instead of being part of MatrixVectorActivation layer. This gives larger
     #: flexibility, and makes it possible to have runtime-writable thresholds.
-    standalone_thresholds: Optional[bool] = False
+    standalone_thresholds: Optional[bool] = True
 
     #: (Optional) Whether optimizations that minimize the bit width of the
     #: weights and accumulator will be applied. Because this optimization relies
@@ -276,6 +287,10 @@ class DataflowBuildConfig:
     #: Memory resource type for large FIFOs
     #: Only relevant when `auto_fifo_depths = True`
     large_fifo_mem_style: Optional[LargeFIFOMemStyle] = LargeFIFOMemStyle.AUTO
+
+    #: FIFOs deeper than this will use Vivado FIFO IP
+    #: (e.g. impl_style="vivado")
+    vivado_fifo_threshold: Optional[int] = 256
 
     #: Target clock frequency (in nanoseconds) for Vivado HLS synthesis.
     #: e.g. `hls_clk_period_ns=5.0` will target a 200 MHz clock.
@@ -372,12 +387,7 @@ class DataflowBuildConfig:
     def _resolve_fpga_part(self):
         if self.fpga_part is None:
             # lookup from part map if not specified
-            if self.shell_flow_type == ShellFlowType.VIVADO_ZYNQ:
-                return pynq_part_map[self.board]
-            elif self.shell_flow_type == ShellFlowType.VITIS_ALVEO:
-                return alveo_part_map[self.board]
-            else:
-                raise Exception("Couldn't resolve fpga_part for " + self.board)
+            return part_map[self.board]
         else:
             # return as-is when explicitly specified
             return self.fpga_part

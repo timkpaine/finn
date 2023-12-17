@@ -8,7 +8,11 @@ from finn.util.fpgadataflow import is_fpgadataflow_node
 
 
 def _is_dwc_node(node):
-    if node.op_type == "StreamingDataWidthConverter_Batch":
+    if node.op_type in [
+        "StreamingDataWidthConverter_Batch",
+        "StreamingDataWidthConverter_rtl",
+        "StreamingDataWidthConverter_ParallelWindow_Batch",
+    ]:
         return True
     else:
         return False
@@ -29,6 +33,11 @@ def _suitable_node(node):
             return False
     else:
         return False
+
+
+def _is_parallel_window_mode(producer, consumer):
+    # disabled, TODO remove parallel DWC insertion logic entirely?
+    return False
 
 
 class InsertDWC(Transformation):
@@ -110,26 +119,50 @@ class InsertDWC(Transformation):
                             )
                             graph.value_info.append(dwc_output_tensor)
 
-                            dwc_node = oh.make_node(
-                                node_optype,
-                                [output_name],
-                                [dwc_output_tensor.name],
-                                domain="finn.custom_op.fpgadataflow",
-                                backend="fpgadataflow",
-                                shape=dwc_shape,
-                                inWidth=dwc_in_width,
-                                outWidth=dwc_out_width,
-                                dataType=str(dtype.name),
-                            )
-                            # if not rtl variant is selected
-                            # use hls mode by default since it supports more configs
-                            # vivado mode can be manually enabled by user, but does not
-                            # support e.g. node-by-node rtlsim neded for
-                            # characterization-based FIFO sizing
-                            if not self.use_rtl_variant:
-                                impl_attr = oh.make_attribute("impl_style", "hls")
-                                dwc_node.attribute.append(impl_attr)
-
+                            if (
+                                n.op_type == "ConvolutionInputGenerator_rtl"
+                                and _is_parallel_window_mode(n0, consumer)
+                            ):
+                                simd = n1.get_nodeattr("SIMD")
+                                pe = n1.get_nodeattr("PE")
+                                channels = n1.get_nodeattr("Channels")
+                                kernel = n1.get_nodeattr("Kernel")
+                                dwc_node = oh.make_node(
+                                    "StreamingDataWidthConverter_rtl",
+                                    [output_name],
+                                    [dwc_output_tensor.name],
+                                    domain="finn.custom_op.fpgadataflow",
+                                    backend="fpgadataflow",
+                                    shape=dwc_shape,
+                                    inWidth=dwc_in_width,
+                                    outWidth=dwc_out_width,
+                                    dataType=str(dtype.name),
+                                    SIMD=simd,
+                                    PE=pe,
+                                    Channels=channels,
+                                    Kernel=kernel,
+                                    Mode="parallel_window",
+                                )
+                            else:
+                                dwc_node = oh.make_node(
+                                    node_optype,
+                                    [output_name],
+                                    [dwc_output_tensor.name],
+                                    domain="finn.custom_op.fpgadataflow",
+                                    backend="fpgadataflow",
+                                    shape=dwc_shape,
+                                    inWidth=dwc_in_width,
+                                    outWidth=dwc_out_width,
+                                    dataType=str(dtype.name),
+                                )
+                                # if not rtl variant is selected
+                                # use hls mode by default since it supports more configs
+                                # vivado mode can be manually enabled by user, but does not
+                                # support e.g. node-by-node rtlsim neded for
+                                # characterization-based FIFO sizing
+                                if not self.use_rtl_variant:
+                                    impl_attr = oh.make_attribute("impl_style", "hls")
+                                    dwc_node.attribute.append(impl_attr)
                             # insert dwc
                             graph.node.insert(node_ind + 1, dwc_node)
 
