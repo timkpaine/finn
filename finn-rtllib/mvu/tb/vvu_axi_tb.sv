@@ -37,18 +37,19 @@ module vvu_axi_tb();
 	// Matrix & parallelism config
 	localparam bit IS_MVU = 0;
 	localparam string COMPUTE_CORE = "mvu_vvu_8sx9_dsp58";
-	localparam int unsigned MW = 25; // Kernel*Kernel
-	localparam int unsigned MH = 4; // Channels
-	localparam int unsigned SIMD = 25; // MW%SIMD == 0
-	localparam int unsigned PE = 2; // MH%PE == 0
-	localparam int unsigned SEGMENTLEN = 3.0;
+	localparam bit PUMPED_COMPUTE = 1;
+	localparam int unsigned MW = 9; // Kernel*Kernel
+	localparam int unsigned MH = 512; // Channels
+	localparam int unsigned SIMD = 3; // MW%SIMD == 0
+	localparam int unsigned PE = 4; // MH%PE == 0
+	localparam int unsigned SEGMENTLEN = 1.0;
 	localparam bit FORCE_BEHAVIORAL = 1;
 	localparam bit M_REG_LUT = 1;
 	// Bit-width config
-	localparam int unsigned ACTIVATION_WIDTH = 4;
-	localparam int unsigned WEIGHT_WIDTH = 4;
+	localparam int unsigned ACTIVATION_WIDTH = 8;
+	localparam int unsigned WEIGHT_WIDTH = 8;
 	localparam int unsigned ACCU_WIDTH = ACTIVATION_WIDTH+WEIGHT_WIDTH+$clog2(MW);
-	localparam bit SIGNED_ACTIVATIONS = 1;
+	localparam bit SIGNED_ACTIVATIONS = 0;
 	// Simulation constants
 	localparam int unsigned NF = MH/PE;
 	localparam int unsigned SF = MW/SIMD;
@@ -62,6 +63,9 @@ module vvu_axi_tb();
 	logic clk = 0;
 	always #5ns clk = !clk;
 
+	logic clk2x = 1;
+	always #2.5ns clk2x = !clk2x;
+
 	logic ap_rst_n = 0;
 	initial begin
 		repeat(16) @(posedge clk);
@@ -69,6 +73,7 @@ module vvu_axi_tb();
 	end
 
 	uwire ap_clk = clk;
+	uwire ap_clk2x = clk2x;
 
 	// Generate activations
 	typedef logic [PE*SIMD-1:0][ACTIVATION_WIDTH-1:0] activation_t;
@@ -214,11 +219,12 @@ module vvu_axi_tb();
 		.ACCU_WIDTH(ACCU_WIDTH),
 		.SIGNED_ACTIVATIONS(SIGNED_ACTIVATIONS),
 		.SEGMENTLEN(SEGMENTLEN),
+		.PUMPED_COMPUTE(PUMPED_COMPUTE),
 		.FORCE_BEHAVIORAL(FORCE_BEHAVIORAL),
 		.M_REG_LUT(M_REG_LUT)
 	)
 	dut (
-		.ap_clk, .ap_rst_n, .s_axis_weights_tdata({ {WEIGHT_WIDTH_BA_DELTA{1'b0}}, weights.dat }), .s_axis_weights_tvalid(weights.vld),
+		.ap_clk, .ap_clk2x, .ap_rst_n, .s_axis_weights_tdata({ {WEIGHT_WIDTH_BA_DELTA{1'b0}}, weights.dat }), .s_axis_weights_tvalid(weights.vld),
 		.s_axis_weights_tready(weights.rdy), .s_axis_input_tdata({ {ACTIVATION_WIDTH_BA_DELTA{1'b0}}, activations.dat }), .s_axis_input_tvalid(activations.vld),
 		.s_axis_input_tready(activations.rdy), .m_axis_output_tdata(outputs.dat), .m_axis_output_tvalid(outputs.vld),
 		.m_axis_output_tready(outputs.rdy)
