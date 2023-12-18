@@ -984,11 +984,11 @@ class MatrixVectorActivation_rtl(HLSCustomOp):
         #    "Infeasible clk target of {} ns has been set, consider lowering".format(clk)
         #    + " the targeted clock frequency!"
         # )
-        critical_path_dsps = np.floor((clk - 0.741) / 0.605 + 1)
-        max_chain_len = np.ceil(self.get_nodeattr("SIMD") / 3)
-        dsp_chain_len = critical_path_dsps if critical_path_dsps < max_chain_len else max_chain_len
-        return dsp_chain_len
-        # return 1
+        # critical_path_dsps = np.floor((clk - 0.741) / 0.605 + 1)
+        # max_chain_len = np.ceil(self.get_nodeattr("SIMD") / 3)
+        # dsp_chain_len = critical_path_dsps if critical_path_dsps < max_chain_len else max_chain_len
+        # return dsp_chain_len
+        return 1
 
     def _resolve_impl_style(self, fpgapart):
         # Based on target device and activation/weight-width, choose the
