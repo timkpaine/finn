@@ -40,7 +40,7 @@ module vvu_axi_tb();
 	localparam bit PUMPED_COMPUTE = 1;
 	localparam int unsigned MW = 9; // Kernel*Kernel
 	localparam int unsigned MH = 512; // Channels
-	localparam int unsigned SIMD = 3; // MW%SIMD == 0
+	localparam int unsigned SIMD = 9; // MW%SIMD == 0
 	localparam int unsigned PE = 4; // MH%PE == 0
 	localparam int unsigned SEGMENTLEN = 1.0;
 	localparam bit FORCE_BEHAVIORAL = 1;
@@ -187,7 +187,7 @@ module vvu_axi_tb();
 		while (NF_CNT < NF) begin
 			// Loop until both rdy & vld are asserted
 			do begin
-				outputs.rdy <= $urandom()%7 >= 0;
+				outputs.rdy <= $urandom()%7 >= 6;
 				@(posedge clk iff ap_rst_n);
 			end while (!(outputs.rdy === 1 && outputs.vld === 1));
 
