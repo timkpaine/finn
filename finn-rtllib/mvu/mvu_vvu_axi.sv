@@ -250,8 +250,8 @@ module mvu_vvu_axi #(
 					Zero <=  1;
 				end
 				else begin
+					En <= en;
 					if(Active) begin
-						En <= en;
 						if(en) begin
 							Last <= '{ alast && avld, 1'b0 };
 							Zero <= !istb;
@@ -324,7 +324,7 @@ module mvu_vvu_axi #(
 				else begin
 					if (dsp_en) begin
 						if(dsp_vld)  P <= dsp_p;
-						Vld <= dsp_vld || (Vld && Active);
+						Vld <= dsp_vld || (Vld && !Active);
 					end
 				end
 			end
