@@ -54,13 +54,23 @@ recho () {
   echo -e "${RED}ERROR: $1${NC}"
 }
 
+
+
+pip install -U setuptools "setuptools_scm<6" wheel
+git config --global --add safe.directory ${FINN_ROOT}/deps/qonnx
+git config --global --add safe.directory ${FINN_ROOT}/deps/finn-experimental
+git config --global --add safe.directory ${FINN_ROOT}/deps/brevitas
+
 # qonnx (using workaround for https://github.com/pypa/pip/issues/7953)
 # to be fixed in future Ubuntu versions (https://bugs.launchpad.net/ubuntu/+source/setuptools/+bug/1994016)
-mv ${FINN_ROOT}/deps/qonnx/pyproject.toml ${FINN_ROOT}/deps/qonnx/pyproject.tmp
+# mv ${FINN_ROOT}/deps/qonnx/pyproject.toml ${FINN_ROOT}/deps/qonnx/pyproject.tmp
 pip install --user -e ${FINN_ROOT}/deps/qonnx
-mv ${FINN_ROOT}/deps/qonnx/pyproject.tmp ${FINN_ROOT}/deps/qonnx/pyproject.toml
+# mv ${FINN_ROOT}/deps/qonnx/pyproject.tmp ${FINN_ROOT}/deps/qonnx/pyproject.toml
+
+pip install -U setuptools "setuptools_scm<4" wheel
 # finn-experimental
 pip install --user -e ${FINN_ROOT}/deps/finn-experimental
+
 # brevitas
 pip install --user -e ${FINN_ROOT}/deps/brevitas
 # pyverilator

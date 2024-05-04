@@ -90,6 +90,7 @@ fetch_repo() {
         # checkout the expected commit
         git -C $CLONE_TO checkout $REPO_COMMIT
     fi
+    chmod -R a+w $CLONE_TO
     # verify one last time
     CURRENT_COMMIT=$(git -C $CLONE_TO rev-parse HEAD)
     if [ $CURRENT_COMMIT == $REPO_COMMIT ]; then
