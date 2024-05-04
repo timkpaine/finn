@@ -29,6 +29,7 @@ torchaudio==0.13.1
 
 pygments==2.14.0
 ipykernel==6.21.2
+jupyterlab>=4
 # jupyter==1.0.0 
 markupsafe==2.0.1
 matplotlib==3.7.0 
